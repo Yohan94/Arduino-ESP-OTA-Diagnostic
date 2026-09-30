@@ -4,7 +4,7 @@ A desktop tool that finds out why an ESP8266 or ESP32 doesn't show up as a netwo
 
 It walks the whole path an OTA upload takes, from basic reachability through mDNS discovery to the device connecting back to your PC, and tells you which step breaks and what to do about it.
 
-![The diagnostic window with a failed firewall check](docs/screenshot.png)
+![The diagnostic window, ready to run, with the Find devices button above the Discovered services table](docs/screenshot.png)
 
 ## Requirements
 
