@@ -494,7 +494,7 @@ class App(tk.Tk):
         "run": ("…  Running", "run"), "idle": ("", "idle"),
     }
     SIDEBAR_W = 330
-    EMPTY_SUMMARY = "Enter the device IP, or use Find devices below."
+    EMPTY_SUMMARY = "Enter the device IP, or use Find devices."
 
     def __init__(self):
         super().__init__()
@@ -522,11 +522,10 @@ class App(tk.Tk):
         fams = set(tkfont.families(self))
         pick = lambda *names: next((n for n in names if n in fams), names[-1])
         ui = pick("Segoe UI Variable Text", "Segoe UI", "Inter", "Helvetica Neue", "DejaVu Sans", "Helvetica")
-        display = pick("Segoe UI Variable Display", ui)
         mono = pick("Cascadia Mono", "Consolas", "JetBrains Mono", "DejaVu Sans Mono", "Courier")
         self.f = {
             "small": (ui, 9), "body": (ui, 10), "strong": (ui, 10, "bold"),
-            "section": (ui, 11, "bold"), "hero": (display, 24),
+            "section": (ui, 11, "bold"),
             "mono": (mono, 10), "mono_b": (mono, 10, "bold"),
         }
 
@@ -684,16 +683,12 @@ class App(tk.Tk):
         for key in reversed(list(CORES)):
             ttk.Radiobutton(top, text=CORES[key]["label"], value=key, variable=self.core_var,
                             style="Seg.Toolbutton", command=self._core_changed).pack(side="right")
-        ip = tk.Entry(side, textvariable=self.ip_var, font=self.f["hero"], width=14,
-                      bg=C["panel"], fg=C["bright"], insertbackground=C["bright"],
-                      selectbackground="#4A4A4A", selectforeground=C["bright"],
-                      relief="flat", bd=0, highlightthickness=0)
-        ip.pack(fill="x", pady=(2, 0))
-        rule = tk.Frame(side, bg=C["line"], height=1)
-        rule.pack(fill="x", pady=(2, 14))
-        ip.bind("<FocusIn>", lambda _: rule.configure(bg=C["bright"]))
-        ip.bind("<FocusOut>", lambda _: rule.configure(bg=C["line"]))
-        ip.bind("<Return>", lambda _: self.run_all())
+        ip_row = ttk.Frame(side, style="Side.TFrame")
+        ip_row.pack(fill="x", pady=(6, 12))
+        b = ttk.Button(ip_row, text="Find devices", command=self.find_devices)
+        b.pack(side="right", fill="y", padx=(8, 0))
+        self.buttons.append(b)
+        self._box(ip_row, self.ip_var, width=14).pack(side="left", fill="x", expand=True)
 
         self._field(side, "Hostname (optional)", self.host_var, suffix=".local").pack(fill="x", pady=(0, 12))
         ports = ttk.Frame(side, style="Side.TFrame")
@@ -779,10 +774,10 @@ class App(tk.Tk):
         head = ttk.Frame(main)
         head.pack(fill="x", pady=(22, 8))
         ttk.Label(head, text="Discovered services", style="Section.TLabel").pack(side="left")
-        b = ttk.Button(head, text="Find devices", style="Small.TButton", command=self.find_devices)
-        b.pack(side="right")
-        self.buttons.append(b)
-        ttk.Label(head, text="Double-click a row to use its IP", style="Hint.TLabel").pack(side="right", padx=(0, 12))
+        self.scan_btn = ttk.Button(head, text="Scan selected", style="Small.TButton", command=self.scan_selected)
+        self.scan_btn.pack(side="right")
+        self.scan_btn.state(["disabled"])
+        ttk.Label(head, text="Select a device, then scan it", style="Hint.TLabel").pack(side="right", padx=(0, 12))
         self.found_tree = ttk.Treeview(
             main, columns=("source", "service", "addr", "port", "info"),
             show="headings", height=4)
@@ -793,6 +788,7 @@ class App(tk.Tk):
         self.found_tree.pack(fill="x")
         self.found_tree.bind("<Double-1>", self._use_found)
         self.found_tree.bind("<Return>", self._use_found)
+        self.found_tree.bind("<<TreeviewSelect>>", lambda _: self._refresh_scan_btn())
 
         # Log
         head = ttk.Frame(main)
@@ -874,6 +870,7 @@ class App(tk.Tk):
                     self._update_summary()
                     for b in self.buttons:
                         b.state(["!disabled"])
+                    self._refresh_scan_btn()
         except queue.Empty:
             pass
         self.after(100, self._pump)
@@ -887,6 +884,7 @@ class App(tk.Tk):
             b.state(["disabled"])
         self.found_tree.delete(*self.found_tree.get_children())
         self.found.clear()
+        self._refresh_scan_btn()
         self.summary_var.set("Looking for devices…")
         threading.Thread(target=self._discover, daemon=True).start()
 
@@ -934,22 +932,39 @@ class App(tk.Tk):
             ip, host = next(iter(hits.items()))
             self._use_device(ip, host)
         elif hits:
-            self.log(f"Found {len(hits)} devices. Double-click one in Discovered services to use it.", "ok")
+            self.log(f"Found {len(hits)} devices. Select one in Discovered services and press Scan selected.", "ok")
         else:
             self.log("No ESP found. Check it is powered and on the same network as this PC "
                      f"({iface or 'no route found'}). A device on another subnet, or one that is not "
                      "connected to Wi-Fi at all, can't be found; read its IP from the serial monitor "
                      "or your router's client list.", "warn")
 
-    def _use_found(self, _event=None):
+    def _selected_device(self):
+        """(ip, hostname) of the selected Discovered services row, or None."""
         sel = self.found_tree.selection()
         if not sel:
-            return
+            return None
         source, _svc, addr, _port, info = (str(v).strip() for v in self.found_tree.item(sel[0], "values"))
         if addr in ("", "?"):
-            return
+            return None
         host = info.split()[0].split(".")[0] if info and source != "ARP" else ""
-        self._use_device(addr, host)
+        return addr, host
+
+    def _refresh_scan_btn(self):
+        ok = not self.busy and self._selected_device() is not None
+        self.scan_btn.state(["!disabled"] if ok else ["disabled"])
+
+    def _use_found(self, _event=None):
+        dev = self._selected_device()
+        if dev:
+            self._use_device(*dev)
+
+    def scan_selected(self):
+        dev = self._selected_device()
+        if not dev or self.busy:
+            return
+        self._use_device(*dev)
+        self.start(self.all_keys, keep_found=True)
 
     def _use_device(self, ip, host=""):
         self.ip_var.set(ip)
@@ -969,6 +984,7 @@ class App(tk.Tk):
             self.tree.item(key, values=("", "  " + label, ""), tags=("idle",))
         self.found_tree.delete(*self.found_tree.get_children())
         self.found.clear()
+        self._refresh_scan_btn()
         self.results.clear()
         self.shown.clear()
         self._update_summary()
@@ -1013,7 +1029,7 @@ class App(tk.Tk):
                 "password": self.pw_var.get(), "core": CORES[self.core_var.get()],
                 "pyexe": self.selected_uploader(), "runner": self.selected_runner()}
 
-    def start(self, keys):
+    def start(self, keys, keep_found=False):
         if self.busy:
             return
         p = self.params()
@@ -1026,8 +1042,10 @@ class App(tk.Tk):
             self.set_status(k, "idle")
         if "callback" in keys and "ota" not in keys:
             self.set_status("ota", "idle")
-        self.found_tree.delete(*self.found_tree.get_children())
-        self.found.clear()
+        if not keep_found:
+            self.found_tree.delete(*self.found_tree.get_children())
+            self.found.clear()
+        self._refresh_scan_btn()
         threading.Thread(target=self._worker, args=(keys, p), daemon=True).start()
 
     def _worker(self, keys, p):
